@@ -1,0 +1,208 @@
+name: DEBUG
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        default: 'master'
+        description: 'which commit should be build'
+      DEVICE:
+        type: choice
+        description: 'which device should be build'
+        options:
+        - x64
+        - mt7620a
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_PUBKEY: ${{secrets.SSH_PUBKEY}}
+      TUNNEL_HOST: ${{secrets.TUNNEL_HOST}}
+    if: github.event.repository.owner.id == github.event.sender.id
+    steps:
+      - name: Connect Back
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          mkdir -p /home/runner/.ssh
+          cat <<< ${SSH_PRIVATE_KEY} > /home/runner/.ssh/id_rsa
+          cat <<< ${SSH_PUBKEY} > /home/runner/.ssh/authorized_keys
+          chmod 600 /home/runner/.ssh/id_rsa
+          chmod 600 /home/runner/.ssh/authorized_keys
+          chmod 700 /home/runner/.ssh
+          random_port=$(shuf -i 20000-65000 -n 1)
+          if [[ -n "${TELEGRAM_BOT_TOKEN}" && -n "${TELEGRAM_CHAT_ID}" ]]; then
+              TELEGRAM_LOG="/tmp/telegram.log"
+              SSH_CMD="ssh runner@127.0.0.1 -p $random_port"
+              MSG="
+              *GitHub Actions - 云编译_DEBUG SSH tunnel info:*
+              ⚡ *CLI:*
+              \`${SSH_CMD}\`
+              "
+              echo -e "Sending message to Telegram..."
+              curl -sSX POST "${TELEGRAM_API_URL:-https://api.telegram.org}/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                  -d "disable_web_page_preview=true" \
+                  -d "parse_mode=Markdown" \
+                  -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -d "text=${MSG}" >${TELEGRAM_LOG}
+              TELEGRAM_STATUS=$(cat ${TELEGRAM_LOG} | jq -r .ok)
+              if [[ ${TELEGRAM_STATUS} != true ]]; then
+                  echo -e "Telegram message sending failed: $(cat ${TELEGRAM_LOG})"
+              else
+                  echo -e "Telegram message sent successfully!"
+              fi
+          fi
+          screen -dmS ngrok bash -c \
+              "ssh -CNTR $random_port:127.0.0.1:22 -oStrictHostKeyChecking=no -oServerAliveInterval=30 -oServerAliveCountMax=60 -C root@${TUNNEL_HOST} -v 2>&1"
+          nohup sh -c '
+          sudo rm -rf \
+            /home/runner/.rustup \
+            /home/runner/.cargo \
+            /home/runner/.dotnet \
+            /usr/share/{swift,miniconda,texlive,az_12.5.0,doc,gradle-8.14.3} \
+            /usr/lib/google-cloud-sdk \
+            /usr/lib/{llvm-16,llvm-17,llvm-18,dotnet} \
+            /opt/{hostedtoolcache,microsoft,az,pipx,google} \
+            /usr/local/julia* \
+            /usr/local/.ghcup \
+            /usr/local/share/powershell \
+            /usr/local/share/chromium \
+            /usr/lib/jvm \
+            /usr/lib/mono \
+            /usr/lib/heroku \
+            /usr/share/dotnet \
+            /etc/{mysql,php,skel}
+          sudo -E apt-get -y purge \
+            azure-cli* mongodb* snap* \
+            ghc* \
+            zulu* \
+            hhvm \
+            llvm* \
+            firefox \
+            google* \
+            dotnet* \
+            powershell \
+            openjdk* \
+            mysql* \
+            php*
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk
+            sudo sysctl vm.swappiness=0
+            docker rmi -f `docker images -q`
+          sudo -E apt-get -y purge \
+            docker*
+          sudo -E apt update
+          sudo -E apt -y install curl iftop pv
+          sudo -E apt -y install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+            ' &
+      - name: 恢复编译环境
+        run: |
+          export DEVICE=${{ github.event.inputs.DEVICE }}
+          echo "DEVICE=$DEVICE" >> $GITHUB_ENV
+          if [ "q${{ github.event.inputs.commit }}" != "q" ] && [ "q${{ github.event.inputs.commit }}" != "qmaster" ] ; then
+            export DEVICE=$DEVICE.${{ github.event.inputs.commit }}
+            echo "DEVICE=$DEVICE" >> $GITHUB_ENV
+          fi
+          cd
+          curl -sL https://raw.githubusercontent.com/klever1988/nanopi-openwrt/zstd-bin/zstd | sudo tee /usr/bin/zstd > /dev/null
+          for i in {1..10}
+          do
+            echo "curl -sL --fail https://github.com/tofuliang/immortalwrt/releases/download/cache/lede.$DEVICE.img.zst.0$i"
+          done
+          for i in {1..10}
+          do
+          [ "$i" -lt 5 ] && while [ "$(df -h|grep root|awk '{print $5}'|rev|cut -c 2- |rev)" -gt 80 ]; do sleep 3;done
+            curl -sL --fail https://github.com/tofuliang/immortalwrt/releases/download/cache/lede.$DEVICE.img.zst.0$i || break
+          done | zstdmt -d -o lede.img && echo "!!!RESTORED IMG!!!" || (truncate -s 35g lede.img && mkfs.btrfs -M lede.img && echo "!!!MADE NEW IMG!!!")
+          LOOP_DEVICE=$(losetup -f) && echo "LOOP_DEVICE=$LOOP_DEVICE" >> $GITHUB_ENV
+          sudo losetup -P --direct-io $LOOP_DEVICE lede.img
+          mkdir lede && sudo mount -o nossd,compress=zstd $LOOP_DEVICE lede
+          sudo ln -s /usr/bin/python3 /usr/bin/python3.8
+          [ -f /home/runner/lede/staging_dir/host/bin/python ] && rm /home/runner/lede/staging_dir/host/bin/python && ln -s /usr/bin/python /home/runner/lede/staging_dir/host/bin/python
+          [ -f /home/runner/lede/staging_dir/host/bin/python3 ] && rm /home/runner/lede/staging_dir/host/bin/python3 && ln -s /usr/bin/python3 /home/runner/lede/staging_dir/host/bin/python3
+          if [ -d 'lede/.git' ]; then
+            cd lede && rm -f zerospace && git config --local user.email "action@github.com" && git config --local user.name "GitHub Action"
+            git fetch && git reset --hard origin/master
+            if [ "q${{ github.event.inputs.commit }}" != "q" ] && [ "q${{ github.event.inputs.commit }}" != "qmaster" ] ; then
+              tar cvf ~/rebase.tar .github/workflows/debug.yaml .github/workflows/fastbuild-* .github/workflows/merge-upstream.yaml \
+              prebuild.sh build_profile.sh \
+              homerouter.config \
+              xxd-1.10.tar.gz && git reset --hard ${{ github.event.inputs.commit }} && tar xvf ~/rebase.tar
+            fi
+          else
+            sudo chown $USER:$(id -gn) lede && git clone -b master --single-branch https://github.com/tofuliang/immortalwrt lede
+          fi
+      - name: 编译准备工作
+        run: |
+          echo "默认工作路径：$(pwd)"
+          cd ~/lede
+          ./prebuild.sh
+          df -h .
+      - name: Daemon
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          tail -f /dev/null || true
+      - name: Daemon
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          tail -f /dev/null || true
+      - name: Daemon
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          tail -f /dev/null || true
+      - name: Daemon
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          tail -f /dev/null || true
+      - name: Daemon
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          tail -f /dev/null || true
+      - name: Daemon
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          tail -f /dev/null || true
+      - name: SSH 连接到 Actions
+        uses: P3TERX/ssh2actions@main
+        if: ${{ failure() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: SSH 连接到 Actions
+        uses: P3TERX/ssh2actions@main
+        if: ${{ failure() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: SSH 连接到 Actions
+        uses: P3TERX/ssh2actions@main
+        if: ${{ failure() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: SSH 连接到 Actions
+        uses: P3TERX/ssh2actions@main
+        if: ${{ failure() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: SSH 连接到 Actions
+        uses: P3TERX/ssh2actions@main
+        if: ${{ failure() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: SSH 连接到 Actions
+        uses: P3TERX/ssh2actions@main
+        if: ${{ failure() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
