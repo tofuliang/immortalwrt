@@ -54,6 +54,19 @@ printf 'src-git oaf https://github.com/tofuliang/OpenAppFilter.git^%s\nsrc-git w
 ./scripts/feeds clean
 ./scripts/feeds update -a -f
 
+# tofuliang/luci-app-wechatpush 是单包仓库，根目录 Makefile 需要放入 feed 包子目录；
+# 否则 scripts/feeds 会把 Makefile 内容当作路径，生成空索引并静默跳过该包。
+normalize_wechatpush_feed() {
+    local feed_dir='feeds/wechatpush'
+    local package_dir="${feed_dir}/luci-app-wechatpush"
+    [ -f "${feed_dir}/Makefile" ] || return 1
+    rm -rf "$package_dir"
+    mkdir -p "$package_dir"
+    find "$feed_dir" -mindepth 1 -maxdepth 1 ! -name .git ! -name "$(basename "$package_dir")" \
+        -exec mv -t "$package_dir" -- {} +
+}
+normalize_wechatpush_feed
+
 # rm -fr luci-compat-app-smartdns
 # (git clone --depth 1 https://github.com/pymumu/smartdns smartdns_repo;
 # mv smartdns_repo/package/luci-compat luci-compat-app-smartdns;rm -fr smartdns_repo)
