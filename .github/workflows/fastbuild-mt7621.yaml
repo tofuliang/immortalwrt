@@ -246,7 +246,7 @@ jobs:
           cd ~/lede
           if [ "$BUILD_PROFILE" = xiaomi-r3g ]; then
             for target in CONFIG_TARGET_ramips=y CONFIG_TARGET_ramips_mt7621=y \
-              CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mi_router_3g=y; do
+              CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mi-router-3g=y; do
               grep -qx "$target" xiaomi-r3g.config || exit 1
             done
           fi
@@ -257,6 +257,10 @@ jobs:
               luci-app-webrestriction luci-app-accesscontrol; do
               grep -qx "CONFIG_PACKAGE_${package}=y" .config || exit 1
             done
+            grep -qx 'CONFIG_TARGET_ramips_mt7621_DEVICE_xiaomi_mi-router-3g=y' .config || {
+              echo 'R3G target not selected by make defconfig' >&2
+              exit 1
+            }
           fi
           mkdir -p /tmp/immortalwrt-build-logs
           echo -e "$(nproc) thread build $BUILD_PROFILE ."
@@ -274,6 +278,16 @@ jobs:
           if [ "$success" != true ]; then
             echo "=== serial verbose build ==="
             make -j1 V=sc 2>&1 | tee "/tmp/immortalwrt-build-logs/serial-vsc.log"
+          fi
+          if [ "$BUILD_PROFILE" = xiaomi-r3g ]; then
+            profile_json=bin/targets/ramips/mt7621/profiles.json
+            jq -e '.profiles | has("xiaomi_mi-router-3g") and (length == 1)' "$profile_json" || {
+              echo 'Expected only Xiaomi Mi Router 3G in profiles.json' >&2
+              exit 1
+            }
+            image=$(jq -er '.profiles["xiaomi_mi-router-3g"].images[] | select(.type == "sysupgrade") | .name' "$profile_json") || exit 1
+            test -f "bin/targets/ramips/mt7621/$image" || exit 1
+            echo "Validated R3G sysupgrade image: $image"
           fi
           echo "Space usage:"
           echo "======================="
