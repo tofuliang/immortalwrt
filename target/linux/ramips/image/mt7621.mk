@@ -2504,6 +2504,21 @@ define Device/phicomm_k2p
 endef
 TARGET_DEVICES += phicomm_k2p
 
+define Device/phicomm_k2p_32m_512m_usb
+  $(Device/dsa-migration)
+  DEVICE_DTS := mt7621_phicomm_k2p-32m-512m-usb
+  IMAGE_SIZE := 32128k
+  DEVICE_VENDOR := Phicomm
+  DEVICE_MODEL := K2P
+  DEVICE_VARIANT := 32M ROM / 512M RAM / USB
+  SUPPORTED_DEVICES += k2p phicomm,k2p phicomm,k2p-32m-512m-usb
+  DEVICE_PACKAGES := kmod-mt7615-firmware kmod-usb2 kmod-usb3 kmod-usb-storage \
+		kmod-scsi-core block-mount kmod-fs-ext4 kmod-fs-vfat kmod-nls-utf8 \
+		kmod-nls-cp437 kmod-usb-net kmod-usb-net-cdc-ether \
+		kmod-usb-net-cdc-ncm kmod-usb-net-huawei-cdc-ncm -uboot-envtools
+endef
+TARGET_DEVICES += phicomm_k2p_32m_512m_usb
+
 define Device/planex_vr500
   $(Device/dsa-migration)
   $(Device/uimage-lzma-loader)
